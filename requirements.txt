@@ -1,0 +1,8 @@
+sqlalchemy>=2.0.30,<3
+psycopg[binary]
+python-dotenv==1.0.0
+schedule==1.2.0
+chardet==5.2.0
+pandas>=2.0.0
+
+
