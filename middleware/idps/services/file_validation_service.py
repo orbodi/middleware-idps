@@ -5,6 +5,7 @@ Utilise pandas pour lire les CSV
 import chardet
 import logging
 import pandas as pd
+from io import StringIO
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 
@@ -103,15 +104,62 @@ class FileValidationService(IFileValidator):
     def _read_and_validate_csv(self, file_path: Path, encoding: str) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
         """Lit et valide le format CSV en utilisant pandas"""
         try:
-            # Lire le CSV avec pandas
+            # Lire le fichier brut pour gérer les lignes hors données (preambule/compteur)
+            with open(file_path, 'r', encoding=encoding, errors='ignore') as f:
+                raw_lines = f.readlines()
+
+            # Normaliser les tabulations (souvent présentes comme indentation/alignement)
+            raw_lines = [ln.replace('\t', ' ') for ln in raw_lines]
+
+            if not raw_lines:
+                return None, "Le fichier CSV est vide"
+
+            def _is_separator_line(line: str) -> bool:
+                """Détecte une ligne de séparation composée uniquement de tirets/points-virgules (tabs/espaces ignorés)."""
+                cleaned = line.strip().replace('\t', ' ').replace(self.files_config.csv_separator, '')
+                cleaned = cleaned.replace(' ', '')
+                return bool(cleaned) and set(cleaned) <= {'-'}
+
+            # Supprimer les lignes vides en tête
+            while raw_lines and not raw_lines[0].strip():
+                raw_lines.pop(0)
+
+            skipped_header_lines = 0
+
+            # Si la première ligne ne contient pas le séparateur, la considérer comme préambule
+            if raw_lines and self.files_config.csv_separator not in raw_lines[0]:
+                raw_lines.pop(0)
+                skipped_header_lines += 1
+
+            # Supprimer les lignes vides après préambule éventuel
+            while raw_lines and not raw_lines[0].strip():
+                raw_lines.pop(0)
+                skipped_header_lines += 1
+
+            # Retirer d'éventuelles lignes de séparation (----;---;---)
+            raw_lines = [ln for ln in raw_lines if not _is_separator_line(ln)]
+
+            # Supprimer une éventuelle ligne compteur en fin de fichier (pas de séparateur ou juste un entier)
+            if raw_lines:
+                tail = raw_lines[-1].strip()
+                if (self.files_config.csv_separator not in tail) or tail.isdigit():
+                    raw_lines.pop()
+
+            if not raw_lines:
+                return None, "Le fichier CSV ne contient aucune donnée après nettoyage"
+
+            cleaned_content = ''.join(raw_lines)
+
+            # Lire le CSV nettoyé avec pandas
             df = pd.read_csv(
-                file_path,
+                StringIO(cleaned_content),
                 encoding=encoding,
                 sep=self.files_config.csv_separator,
                 dtype=str,  # Tout lire comme string pour éviter les problèmes de type
                 keep_default_na=False,  # Ne pas convertir les chaînes vides en NaN
                 na_values=[''],  # Traiter les chaînes vides comme NaN mais les garder comme chaînes
-                on_bad_lines='skip'  # Ignorer les lignes mal formées
+                on_bad_lines='skip',  # Ignorer les lignes mal formées
+                engine='python'  # Nécessaire pour skip_footer implicite via nettoyage
             )
             
             # Vérifier que le fichier n'est pas vide
@@ -132,7 +180,8 @@ class FileValidationService(IFileValidator):
                         cleaned_row[key] = None
                     else:
                         cleaned_row[key] = str(value) if value is not None else None
-                cleaned_row['_line_number'] = idx + 2  # +2 car idx commence à 0 et on compte l'en-tête
+                # Calcule le numéro de ligne d'origine en tenant compte des lignes ignorées et de l'en-tête
+                cleaned_row['_line_number'] = skipped_header_lines + idx + 2  # +2 car idx commence à 0 et on compte l'en-tête
                 data.append(cleaned_row)
             
             if not data:

@@ -98,6 +98,13 @@ Le pipeline d'ingestion suit les étapes suivantes :
 ### Installation des dépendances
 
 ```bash
+# Créer un environnement virtuel (recommandé)
+python3 -m venv venv
+source venv/bin/activate  # Sur Linux/Mac
+# ou
+venv\Scripts\activate  # Sur Windows
+
+# Installer les dépendances
 pip install -r requirements.txt
 ```
 
@@ -178,15 +185,83 @@ python scheduler.py
 Ajouter une entrée dans le crontab :
 
 ```bash
-0 3 * * * cd /chemin/vers/Biometrics_BI && /usr/bin/python3 -m middleware.csv_handler >> logs/cron.log 2>&1
+# Éditer le crontab
+crontab -e
+
+# Ajouter cette ligne pour exécuter tous les jours à 03h00
+0 3 * * * cd /chemin/vers/Biometrics_BI && /usr/bin/python3 -m middleware.idps.handler >> logs/cron.log 2>&1
 ```
+
+**Note pour Linux** : Assurez-vous que :
+- Le chemin Python est correct (`which python3` pour trouver le chemin)
+- Les permissions d'exécution sont correctes
+- Le répertoire de logs existe et est accessible en écriture
 
 ### Exécution via Task Scheduler (Windows)
 
 Créer une tâche planifiée qui exécute :
 
 ```
-python.exe -m middleware.csv_handler
+python.exe -m middleware.idps.handler
+```
+
+## Compatibilité Linux
+
+Le projet est **entièrement compatible Linux** :
+
+✅ **Chemins de fichiers** : Utilisation de `pathlib.Path` (cross-platform)  
+✅ **Séparateurs** : Utilisation de l'opérateur `/` de pathlib (fonctionne sur tous les OS)  
+✅ **Manipulation de fichiers** : Utilisation de `shutil` (cross-platform)  
+✅ **Pas de dépendances Windows** : Aucune commande PowerShell ou cmd  
+✅ **Chemins relatifs** : Utilisation de `./` dans la configuration  
+
+### Configuration Linux
+
+Les chemins dans le fichier `.env` peuvent être :
+- **Relatifs** : `./data/idps/input` (recommandé)
+- **Absolus Linux** : `/var/data/idps/input` ou `/home/user/biometrics/data/idps/input`
+
+### Permissions Linux
+
+Assurez-vous que les répertoires ont les bonnes permissions :
+
+```bash
+# Créer les répertoires avec les bonnes permissions
+mkdir -p data/idps/{input,archive,error}
+chmod 755 data/idps/{input,archive,error}
+
+# Pour les logs
+mkdir -p logs
+chmod 755 logs
+```
+
+### Exécution en tant que service Linux (systemd)
+
+Créer un fichier `/etc/systemd/system/biometrics-idps.service` :
+
+```ini
+[Unit]
+Description=Biometrics IDPS Middleware
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=biometrics
+WorkingDirectory=/opt/biometrics_bi
+Environment="PATH=/opt/biometrics_bi/venv/bin"
+ExecStart=/opt/biometrics_bi/venv/bin/python -m middleware.idps.handler
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Puis activer le service :
+
+```bash
+sudo systemctl enable biometrics-idps.service
+sudo systemctl start biometrics-idps.service
 ```
 
 ## Types de fichiers supportés
